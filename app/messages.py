@@ -1,0 +1,165 @@
+"""Har error dono zubaanon mein. Naya message yahan dono zubaan ke saath jorein."""
+from fastapi import HTTPException
+
+MESSAGES = {
+    "email_invalid": {"roman_urdu": "Email sahi nahi hai.", "en": "The email is not valid."},
+    "password_short": {
+        "roman_urdu": "Password kam az kam 8 harf ka hona chahiye.",
+        "en": "Password must be at least 8 characters.",
+    },
+    "email_taken": {
+        "roman_urdu": "Is email se account pehle se bana hua hai.",
+        "en": "An account with this email already exists.",
+    },
+    "login_failed": {
+        "roman_urdu": "Email ya password ghalat hai.",
+        "en": "Email or password is incorrect.",
+    },
+    "account_locked": {
+        "roman_urdu": "Bohat ghalat koshishen hui hain. Thori der baad dobara koshish karein.",
+        "en": "Too many failed attempts. Please try again later.",
+    },
+    "not_logged_in": {"roman_urdu": "Pehle login karein.", "en": "Please log in first."},
+    "category_invalid": {"roman_urdu": "Category sahi nahi hai.", "en": "The category is not valid."},
+    "province_invalid": {"roman_urdu": "Sooba sahi nahi hai.", "en": "The province is not valid."},
+    "statement_short": {
+        "roman_urdu": "Masla kam az kam 20 harf mein likhein.",
+        "en": "Please describe the problem in at least 20 characters.",
+    },
+    "field_too_long": {"roman_urdu": "Text bohat lamba hai.", "en": "The text is too long."},
+    "city_required": {"roman_urdu": "Shehar likhna zaroori hai.", "en": "City is required."},
+    "summary_required": {
+        "roman_urdu": "Summary likhein aur approve karein.",
+        "en": "Please write and approve the summary.",
+    },
+    "idempotency_required": {
+        "roman_urdu": "Idempotency-Key header zaroori hai (8 se 100 harf).",
+        "en": "The Idempotency-Key header is required (8 to 100 characters).",
+    },
+    "not_found": {"roman_urdu": "Yeh request nahi mili.", "en": "Request not found."},
+    "forbidden": {"roman_urdu": "Aap ko is ki ijazat nahi.", "en": "You do not have permission."},
+    "next_not_assigned": {
+        "roman_urdu": "Abhi wakeel assign nahi hua. Aap ki request save hai aur coordinator ki queue mein hai. Neeche verified contacts se aap khud bhi rabta kar sakte hain.",
+        "en": "No lawyer has been assigned yet. Your request is saved and is in the coordinator queue. You can also contact the verified contacts below yourself.",
+    },
+    "next_accepted": {
+        "roman_urdu": "Wakeel ne request qubool kar li hai.",
+        "en": "A lawyer has accepted your request.",
+    },
+    "referral_needs_consent": {
+        "roman_urdu": "User ne abhi referral ki ijazat nahi di.",
+        "en": "The user has not given consent for a referral yet.",
+    },
+    "referral_needs_ack": {
+        "roman_urdu": "Delivered likhne ke liye centre ka acknowledgment reference zaroori hai.",
+        "en": "An acknowledgment reference from the centre is required to mark delivered.",
+    },
+    "referral_needs_reason": {
+        "roman_urdu": "Failed likhne ke liye wajah zaroori hai.",
+        "en": "A reason is required to mark a referral as failed.",
+    },
+    "referral_invalid": {
+        "roman_urdu": "Referral ki tafseel sahi nahi (target aur status attempted/delivered/failed).",
+        "en": "The referral details are not valid (target and status attempted/delivered/failed).",
+    },
+    "request_closed": {"roman_urdu": "Yeh request band ho chuki hai.", "en": "This request is closed."},
+    "contact_invalid": {
+        "roman_urdu": "Contact ki tafseel sahi nahi (https source aur YYYY-MM-DD tareekh zaroori).",
+        "en": "Contact details are not valid (an https source and a YYYY-MM-DD date are required).",
+    },
+    "role_invalid": {
+        "roman_urdu": "Yeh role abhi nahi diya ja sakta.",
+        "en": "This role cannot be assigned yet.",
+    },
+    "user_not_found": {"roman_urdu": "User nahi mila.", "en": "User not found."},
+    "cannot_demote_self": {
+        "roman_urdu": "Apna hi super admin role nahi hataya ja sakta. Pehle kisi doosre ko super admin banayein.",
+        "en": "You cannot remove your own super admin role. Promote another account to super admin first.",
+    },
+    "next_alternatives": {
+        "roman_urdu": "Abhi tak wakeel assign nahi hua. Intezar na karein: neeche diye gaye verified contacts se abhi rabta karein. Aap ki request coordinator ki queue mein rehti hai.",
+        "en": "No lawyer has been assigned yet. Please do not just wait: contact the verified contacts below now. Your request stays in the coordinator queue.",
+    },
+    "next_closed": {"roman_urdu": "Yeh request band hai.", "en": "This request is closed."},
+    "referral_failed_note": {
+        "roman_urdu": "Referral abhi kamyab nahi hui; coordinator dobara koshish kar sakta hai.",
+        "en": "The referral was not successful yet; the coordinator may try again.",
+    },
+    "ai_disabled": {"roman_urdu": "AI abhi band hai. Aap khud summary likh sakte hain.", "en": "AI is switched off. You can write the summary yourself."},
+    "ai_no_key": {"roman_urdu": "AI ki key set nahi hai. Aap khud summary likh sakte hain.", "en": "No AI key is configured. You can write the summary yourself."},
+    "ai_free_tier_blocked": {"roman_urdu": "Is setup mein AI asli users ke liye band hai (free key par data mehfooz nahi). Aap khud summary likh sakte hain.", "en": "AI is switched off for real users in this setup (a free key does not protect data). You can write the summary yourself."},
+    "ai_not_for_category": {"roman_urdu": "Is category mein AI nahi chalta. Aap khud summary likh sakte hain.", "en": "AI is not used for this category. You can write the summary yourself."},
+    "ai_consent_required": {"roman_urdu": "AI istemal karne ke liye aap ki ijazat zaroori hai.", "en": "Your consent is required to use AI."},
+    "ai_unavailable": {"roman_urdu": "AI abhi dastiyab nahi. Aap khud summary likh kar request submit kar sakte hain; request phir bhi save hogi.", "en": "AI is not available right now. You can write the summary yourself and submit; your request will still be saved."},
+    "ai_rate_limited": {"roman_urdu": "AI ki ghante ki hadd poori ho gayi. Thori der baad try karein ya khud summary likhein.", "en": "The hourly AI limit is reached. Try later or write the summary yourself."},
+    "ai_notice": {"roman_urdu": "Yeh AI ka draft hai. Approve karne se pehle isay parhein aur galtiyan theek karein. AI qanooni mashwara nahi deta.", "en": "This is an AI draft. Read it and correct mistakes before approving. AI does not give legal advice."},
+    "ai_provider_invalid": {"roman_urdu": "Provider gemini, openai ya deepseek hona chahiye.", "en": "Provider must be gemini, openai or deepseek."},
+    "ai_model_invalid": {"roman_urdu": "Model ka naam sahi nahi hai.", "en": "The model name is not valid."},
+    "ai_key_invalid": {"roman_urdu": "API key kam az kam 8 harf ki honi chahiye.", "en": "The API key must be at least 8 characters."},
+    "gemini_key_invalid": {"roman_urdu": "Gemini API key sahi nahi lagti. Google AI Studio se key copy karein (AIza se shuru hoti hai).", "en": "That does not look like a Gemini API key. Copy the key from Google AI Studio (it starts with AIza)."},
+    "ai_key_required": {"roman_urdu": "Is provider ke liye nayi API key darj karein.", "en": "Enter an API key for this provider."},
+    "lawyer_invalid": {"roman_urdu": "Wakeel ki tafseel sahi nahi (bar council, licence number, shehar zaroori).", "en": "Lawyer details are not valid (bar council, licence number and city are required)."},
+    "licence_taken": {"roman_urdu": "Yeh licence number pehle se kisi aur account se juda hai.", "en": "This licence number is already linked to another account."},
+    "lawyer_not_found": {"roman_urdu": "Wakeel nahi mila.", "en": "Lawyer not found."},
+    "lawyer_not_verified": {"roman_urdu": "Yeh wakeel abhi verified nahi.", "en": "This lawyer is not verified."},
+    "not_a_lawyer": {"roman_urdu": "Sirf verified wakeel yeh kar sakta hai.", "en": "Only a verified lawyer can do this."},
+    "verification_incomplete": {"roman_urdu": "Verify karne ke liye shakhsiyat aur registration dono ki jaanch aur source ka note (kam az kam 10 harf) zaroori hai.", "en": "To verify, both identity and registration checks and a source note (at least 10 characters) are required."},
+    "reason_required": {"roman_urdu": "Wajah likhna zaroori hai.", "en": "A reason is required."},
+    "assignment_exists": {"roman_urdu": "Is request ka pehle se ek active offer ya wakeel hai.", "en": "This request already has an active offer or lawyer."},
+    "offer_expired": {"roman_urdu": "Is offer ki meead khatam ho chuki hai.", "en": "This offer has expired."},
+    "not_pending": {"roman_urdu": "Yeh offer ab is halat mein nahi.", "en": "This offer is no longer in that state."},
+    "role_not_allowed": {"roman_urdu": "Is account ki role se wakeel ki arzi nahi ho sakti.", "en": "This account role cannot apply as a lawyer."},
+    "chat_not_available": {"roman_urdu": "Chat tab shuru hoti hai jab wakeel request qubool kar le.", "en": "Chat opens once a lawyer has accepted the request."},
+    "message_invalid": {"roman_urdu": "Message 1 se 2000 harf ka hona chahiye.", "en": "A message must be 1 to 2000 characters."},
+    "chat_rate_limited": {"roman_urdu": "Ghante mein bohat zyada messages. Thori der baad likhein.", "en": "Too many messages this hour. Please try again later."},
+    "file_type_invalid": {"roman_urdu": "Sirf PDF, JPG ya PNG file chalti hai.", "en": "Only PDF, JPG or PNG files are allowed."},
+    "file_too_large": {"roman_urdu": "File bohat bari hai.", "en": "The file is too large."},
+    "file_empty": {"roman_urdu": "File khali hai.", "en": "The file is empty."},
+    "too_many_files": {"roman_urdu": "Is request par files ki hadd poori ho gayi.", "en": "The file limit for this request is reached."},
+    "file_missing": {"roman_urdu": "File ab maujood nahi.", "en": "The file is no longer available."},
+    "followup_invalid": {"roman_urdu": "Follow-up ki pasand daily, weekly, important_only ya off ho sakti hai; safe_time HH:MM mein.", "en": "Follow-up preference must be daily, weekly, important_only or off; safe_time in HH:MM."},
+    "tz_invalid": {"roman_urdu": "Timezone sahi nahi (jaise Asia/Karachi).", "en": "The timezone is not valid (for example Asia/Karachi)."},
+    "channel_unavailable": {"roman_urdu": "Yeh channel abhi available nahi (provider configure nahi). Abhi sirf in_app hai.", "en": "This channel is not available yet (no provider configured). Only in_app is available now."},
+    "slot_invalid": {"roman_urdu": "Slot ka waqt sahi nahi (mustaqbil mein, 15 minute se 4 ghante, 60 din ke andar).", "en": "The slot time is not valid (in the future, 15 minutes to 4 hours, within 60 days)."},
+    "slot_overlap": {"roman_urdu": "Yeh waqt aap ke pehle diye hue slot se takrata hai.", "en": "This time overlaps one of your existing slots."},
+    "slot_taken": {"roman_urdu": "Yeh slot ab khali nahi.", "en": "This slot is no longer available."},
+    "already_booked": {"roman_urdu": "Is request ka pehle se ek slot book hai.", "en": "This request already has a booked slot."},
+    "repeat_invalid": {"roman_urdu": "Dohrane ki hadd: daily mein 14 tak, weekly mein 8 tak.", "en": "Repeat limit: up to 14 for daily, up to 8 for weekly."},
+    "csrf_blocked": {"roman_urdu": "Yeh darkhwast kisi aur website se aayi lagti hai, isliye roki gayi.", "en": "This request appears to come from another website, so it was blocked."},
+    "rate_limited_ip": {"roman_urdu": "Bohat zyada koshishen. Thori der baad dobara try karein.", "en": "Too many attempts. Please try again in a little while."},
+    "password_wrong": {"roman_urdu": "Purana password sahi nahi.", "en": "The current password is not correct."},
+    "delete_not_allowed": {"roman_urdu": "Is account ko khud nahi mitaya ja sakta; admin se rabta karein.", "en": "This account cannot be deleted by yourself; please contact an admin."},
+    "child_review_pending": {"roman_urdu": "Bachon ke is masle ka pehle tarbiyat yafta reviewer ka review baqi hai.", "en": "A qualified reviewer must first review this child-related request."},
+    "next_child_review": {"roman_urdu": "Bachon ke masle par pehle ek tarbiyat yafta reviewer dekhta hai. Is dauran kisi ko aap ki tafseel nahi bheji jati, aur guardian ko koi cheez khud-ba-khud nahi jati.", "en": "A qualified reviewer first looks at requests about children. Meanwhile nothing is sent to anyone, and nothing is sent to a guardian automatically."},
+    "review_invalid": {"roman_urdu": "Faisla cleared ya pending ho, aur reviewer ka note kam az kam 10 harf ka.", "en": "The decision must be cleared or pending, with a reviewer note of at least 10 characters."},
+    "legal_attest_required": {"roman_urdu": "Upload se pehle tasdeeq karein ke yeh document official source se verify kiya gaya hai.", "en": "Please confirm that this document was verified from an official source."},
+    "legal_source_invalid": {"roman_urdu": "Title, https source link aur YYYY-MM-DD tareekh zaroori hain.", "en": "A title, an https source link and a YYYY-MM-DD date are required."},
+    "pdf_invalid": {"roman_urdu": "Yeh sahi PDF nahi (ya bohat bara hai).", "en": "This is not a valid PDF (or it is too large)."},
+    "pdf_no_text": {"roman_urdu": "PDF mein parhne layak matn nahi mila. Scanned PDF ke liye OCR (Tesseract) install karein.", "en": "No readable text was found. For scanned PDFs, install OCR (Tesseract)."},
+    "doc_duplicate": {"roman_urdu": "Yeh document pehle se maujood hai.", "en": "This document already exists."},
+    "rag_unavailable": {"roman_urdu": "Is sawal ke liye zaroori service abhi dastiyab nahi.", "en": "The service needed for this question is not available right now."},
+    "question_invalid": {"roman_urdu": "Sawal 5 se 1000 harf ka hona chahiye.", "en": "The question must be 5 to 1000 characters."},
+    "rag_not_found": {"roman_urdu": "Mujhe verified sources mein is sawal ka jawab nahi mila. Is ka matlab yeh nahi ke koi qanoon nahi; apne masle par verified wakeel se mashwara karein.", "en": "I could not find an answer in the verified sources. That does not mean no law applies; please ask a verified lawyer about your case."},
+    "rag_disclaimer": {"roman_urdu": "Yeh verified sources se ibtidai maloomat hai, aap ke masle par qanooni mashwara nahi. Individual mashwara sirf verified wakeel deta hai.", "en": "This is first-step information from verified sources, not legal advice on your case. Individual advice comes only from a verified lawyer."},
+    "kb_not_found": {"roman_urdu": "Yeh Knowledge Base nahi mili.", "en": "This knowledge base was not found."},
+    "kb_title_invalid": {"roman_urdu": "Knowledge Base ka title 1 se 80 harf ka hona chahiye.", "en": "The knowledge base title must be 1 to 80 characters."},
+    "kb_prompt_invalid": {"roman_urdu": "System prompt 4000 harf se zyada nahi ho sakta.", "en": "The system prompt cannot exceed 4000 characters."},
+    "chunk_not_found": {"roman_urdu": "Yeh chunk nahi mila.", "en": "This chunk was not found."},
+    "chunk_text_invalid": {"roman_urdu": "Chunk ka matn 1 se 8000 harf ka hona chahiye.", "en": "The chunk text must be 1 to 8000 characters."},
+    "kb_empty_sources": {"roman_urdu": "Is Knowledge Base mein abhi koi matn nahi. Pehle PDF upload karein.", "en": "This knowledge base has no content yet. Upload a PDF first."},
+    "kb_not_found_answer": {"roman_urdu": "Is Knowledge Base ke documents mein is sawal ka jawab nahi mila.", "en": "The answer to this question was not found in this knowledge base's documents."},
+    "kb_disclaimer": {"roman_urdu": "Yeh aap ke apne documents se ibtidai jawab hai, qanooni mashwara nahi.", "en": "This is a first-step answer from your own documents, not legal advice."},
+    "kb_widget_invalid": {"roman_urdu": "Embed link sahi nahi ya band kar diya gaya hai.", "en": "The embed link is not valid or has been disabled."},
+    "language_invalid": {
+        "roman_urdu": "Zaban sirf roman_urdu ya en ho sakti hai.",
+        "en": "Language must be roman_urdu or en.",
+    },
+}
+
+
+def pick_lang(value: str | None) -> str:
+    return "en" if value and value.lower().startswith("en") else "roman_urdu"
+
+
+def fail(status: int, code: str, lang: str | None = None) -> HTTPException:
+    return HTTPException(status, {"code": code, "message": MESSAGES[code][pick_lang(lang)]})

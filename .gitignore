@@ -1,0 +1,8 @@
+.env
+*.db
+.venv/
+__pycache__/
+uploads/
+backups/
+uploads.pre-restore/
+*.pre-restore
