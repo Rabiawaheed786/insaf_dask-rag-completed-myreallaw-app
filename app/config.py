@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     retention_days: int = 365
     rag_embedder: str = "local"  # local (offline, lafzon par) | gemini (matlab par, API)
     embed_model: str = "gemini-embedding-001"
+    qdrant_url: str = ""
+    qdrant_api_key: str = ""
+    qdrant_timeout_seconds: float = 10
     rag_top_k: int = 4
     rag_min_score: float = -1.0  # -1 = khud (embedder ke hisaab se)
     rag_chunk_chars: int = 900

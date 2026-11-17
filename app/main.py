@@ -17,7 +17,7 @@ from .cases import router as cases_router, seed_official_contacts
 from .ai_admin import router as ai_admin_router
 from .ai_api import router as ai_router
 from .chat import router as chat_router
-from .kb import router as kb_router
+from .kb import router as kb_router, collections_router
 from .config import settings
 from .messages import MESSAGES, pick_lang
 from .db import engine
@@ -78,6 +78,7 @@ app.include_router(slots_router)
 app.include_router(privacy_router)
 app.include_router(rag_router)
 app.include_router(kb_router)
+app.include_router(collections_router)
 
 
 def _origin_ok(request) -> bool:

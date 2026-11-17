@@ -349,18 +349,6 @@ a:hover { color: var(--primary-hover); }
 }
 .hero-panel > * { position: relative; z-index: 1; }
 .hero-panel h1 { max-width: 24ch; }
-.hero-watermark {
-  position: absolute; left: 50%; top: 42%;
-  width: min(82%, 500px); height: auto;
-  transform: translate(-50%, -50%);
-  opacity: .09;
-  pointer-events: none; user-select: none;
-  z-index: 0;
-}
-.hero-panel > .hero-watermark { position: absolute; z-index: 0; }
-.wm-head { position: relative; overflow: hidden; }
-.wm-head > .hero-watermark { width: min(78%, 380px); opacity: .08; }
-.wm-head > .page-head { position: relative; z-index: 1; }
 .hero-badge { margin-bottom: 14px; }
 .hero-badge .badge { padding: 5px 11px; font-size: 12px; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 16px; }
@@ -885,7 +873,7 @@ progress.progress::-moz-progress-bar { background: var(--primary); border-radius
 .detail-body p:last-child { margin-bottom: 0; }
 
 main:has(> .emergency-page) { padding-top: 0; }
-.emergency-page { padding-top: 6rem; }
+.emergency-page { padding-top: 6rem; padding-bottom: 3rem; }
 .emergency-page :is(h1, h2, h3, a, button) { scroll-margin-top: 10rem; }
 .emergency-page .emergency-back { margin: 0 0 20px; }
 .emergency-heading { margin-bottom: 26px; }

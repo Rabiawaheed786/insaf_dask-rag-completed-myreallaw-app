@@ -84,7 +84,6 @@ export function home() {
   return h("section", { class: "home home-exec" },
     h("div", { class: "home-hero-grid" },
       h("div", { class: "hero-panel home-hero-left" },
-        h("img", { class: "hero-watermark", src: "/static/img/emblem.svg", alt: "", "aria-hidden": "true" }),
         h("div", { class: "hero-badge" }, h("span", { class: "badge badge-ok" }, t("home_badge"))),
         h("h1", {}, t("home_title")),
         h("p", { class: "lead" }, t("home_lead")),

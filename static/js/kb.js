@@ -47,7 +47,10 @@ export function profileCard() {
 }
 
 export function kbCard(onData) {
+  let currentList = [];
+  let requestRevision = 0;
   const listBox = h("div", { class: "kb-list" });
+  const listMsg = h("div", { role: "status", "aria-live": "polite" });
   const titleIn = h("input", { id: "kb_new_title", name: "kb_new_title", type: "text", maxlength: 80, placeholder: t("kb_create_ph") });
   const createBtn = h("button", { class: "kb-create-submit", type: "submit", title: t("kb_create_btn"), "aria-label": t("kb_create_btn") }, plusIcon(18));
   const createMsg = h("div", { role: "status", "aria-live": "polite" });
@@ -58,31 +61,61 @@ export function kbCard(onData) {
 
   createForm.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (createBtn.disabled) return;
     createMsg.replaceChildren();
     const title = titleIn.value.trim();
     if (!title) { createMsg.append(alertBox(t("kb_name"))); return; }
     createBtn.disabled = true;
     createBtn.setAttribute("aria-busy", "true");
     let r;
-    try { r = await api("POST", "/api/kb", { title, system_prompt: "" }); }
+    try { r = await api("POST", "/collections", { collection_name: title, system_prompt: "" }); }
     finally { createBtn.disabled = false; createBtn.removeAttribute("aria-busy"); }
     if (!r || !r.ok) { createMsg.append(alertBox(r ? errorText(r) : t("err_network"))); return; }
+    // A pending list request must not overwrite this confirmed creation.
+    requestRevision++;
+    currentList = [...currentList.filter((kb) => kb.id !== r.data.id), r.data];
     titleIn.value = "";
+    listMsg.replaceChildren();
+    render();
+    createMsg.append(h("div", { class: "success" }, t("kb_created")));
     load();
   });
 
-  const load = () => fill(listBox, async () => {
-    const r = await api("GET", "/api/kb");
-    if (!r.ok) return alertBox(errorText(r));
-    const kbs = r.data.knowledge_bases;
-    if (onData) onData(kbs);
-    if (!kbs.length) return h("p", { class: "empty" }, t("kb_empty"));
-    return h("div", { class: "kb-items" }, kbs.map((kb) => kbItem(kb, load)));
-  });
+  const deleted = (kb, r) => {
+    listMsg.replaceChildren();
+    if (!r.ok) { listMsg.append(alertBox(`${t("kb_delete_failed")} ${errorText(r)}`)); return; }
+    requestRevision++;
+    currentList = currentList.filter((item) => item.id !== kb.id);
+    render();
+    listMsg.append(h("div", { class: "success" }, t("kb_deleted")));
+  };
+
+  const render = () => {
+    listBox.replaceChildren(currentList.length
+      ? h("div", { class: "kb-items" }, currentList.map((kb) => kbItem(kb, load, deleted)))
+      : h("p", { class: "empty" }, t("kb_empty")));
+    if (onData) onData(currentList);
+  };
+
+  const load = async () => {
+    const revision = ++requestRevision;
+    listMsg.replaceChildren();
+    if (!currentList.length) listBox.replaceChildren(h("p", { class: "empty" }, t("loading")));
+    const r = await api("GET", "/collections");
+    if (revision !== requestRevision) return;
+    if (!r.ok) {
+      render();
+      listMsg.append(alertBox(errorText(r)));
+      return;
+    }
+    currentList = r.data.collections;
+    render();
+  };
 
   load();
   return h("div", { class: "card kb-hub" },
     h("div", { class: "card-head" }, h("h2", {}, t("dash_kb_manager_title"))),
+    listMsg,
     h("div", { class: "kb-manager" }, listBox, createForm));
 }
 
@@ -131,7 +164,7 @@ const ACT_ICONS = {
   code: ["M8 8l-4 4 4 4", "M16 8l4 4-4 4", "M13.5 5l-3 14"],
 };
 
-function kbItem(kb, refresh) {
+function kbItem(kb, refresh, onDelete) {
   const openBtn = h("button", { class: "kb-item-title", type: "button", title: t("kb_open") }, kb.title);
   openBtn.addEventListener("click", () => openKbModal(kb, refresh));
   const chatLink = h("a", { class: "btn secondary small kb-act", href: `#/kb-chat/${kb.id}` },
@@ -144,9 +177,14 @@ function kbItem(kb, refresh) {
   embedBtn.addEventListener("click", () => openEmbedModal(kb));
   const delBtn = h("button", { class: "btn ghost small danger-text kb-del", type: "button", title: t("kb_delete"), "aria-label": t("kb_delete") }, trashIcon());
   delBtn.addEventListener("click", async () => {
-    if (!ask("kb_delete_confirm")) return;
-    await withLoading(delBtn, t("loading"), () => api("DELETE", `/api/kb/${kb.id}`));
-    refresh();
+    if (delBtn.disabled || !ask("kb_delete_confirm")) return;
+    // Keep the SVG intact while the request is pending and after any error.
+    delBtn.disabled = true;
+    delBtn.setAttribute("aria-busy", "true");
+    let r;
+    try { r = await api("DELETE", `/collections/${kb.id}`); }
+    finally { delBtn.disabled = false; delBtn.removeAttribute("aria-busy"); }
+    onDelete(kb, r);
   });
   return h("div", { class: "kb-item" },
     h("div", { class: "kb-item-main" },
@@ -202,7 +240,7 @@ function openKbModal(kb, refresh) {
 
     const renderChunks = async (flash) => {
       chunkBox.replaceChildren(h("p", { class: "empty" }, t("loading")));
-      const r = await api("GET", `/api/kb/${kb.id}/chunks`);
+      const r = await api("GET", `/collections/${kb.id}/chunks`);
       if (!r.ok) { chunkBox.replaceChildren(alertBox(errorText(r))); return; }
       const head = flash ? h("div", { class: "success" }, flash) : null;
       if (!r.data.chunks.length) { chunkBox.replaceChildren(...[head, h("p", { class: "empty" }, t("kb_chunks_empty"))].filter(Boolean)); return; }
@@ -227,18 +265,18 @@ function openKbModal(kb, refresh) {
         msg.replaceChildren();
         const text = ta.value.trim();
         if (!text) { msg.append(alertBox(t("kb_chunk_text"))); return; }
-        const r = await withLoading(save, t("loading"), () => api("PUT", `/api/kb/${kb.id}/chunks/${c.chunk_id}`, { text }));
+        const r = await withLoading(save, t("loading"), () => api("PUT", `/collections/${kb.id}/chunks/${c.chunk_id}`, { text }));
         if (!r.ok) { msg.append(alertBox(errorText(r))); return; }
         renderChunks(t("kb_chunk_saved"));
       });
       del.addEventListener("click", async () => {
         if (!ask("kb_chunk_delete_confirm")) return;
-        const r = await withLoading(del, t("loading"), () => api("DELETE", `/api/kb/${kb.id}/chunks/${c.chunk_id}`));
+        const r = await withLoading(del, t("loading"), () => api("DELETE", `/collections/${kb.id}/chunks/${c.chunk_id}`));
         if (!r.ok) { msg.replaceChildren(alertBox(errorText(r))); return; }
         renderChunks();
         if (refresh) refresh();
       });
-      back.addEventListener("click", renderChunks);
+      back.addEventListener("click", () => renderChunks());
       chunkBox.replaceChildren(h("div", { class: "kb-editor" },
         h("div", { class: "kb-chunk-meta" }, `#${c.chunk_id} \u00b7 ${t("legal_page")} ${c.page}`),
         h("label", { class: "kb-editor-label", for: "kb_chunk_edit" }, t("kb_chunk_editor")),
@@ -249,7 +287,7 @@ function openKbModal(kb, refresh) {
     uploadBtn.addEventListener("click", async () => {
       uploadMsg.replaceChildren();
       if (!file.files.length) { uploadMsg.append(alertBox(t("file_empty"))); return; }
-      const r = await withLoading(uploadBtn, t("kb_uploading"), () => apiUpload(`/api/kb/${kb.id}/upload`, file.files[0],
+      const r = await withLoading(uploadBtn, t("kb_uploading"), () => apiUpload(`/collections/${kb.id}/upload`, file.files[0],
         { consent: consent.checked ? "true" : "false" }));
       if (!r.ok) { uploadMsg.append(alertBox(errorText(r))); return; }
       file.value = "";
@@ -336,9 +374,9 @@ function openEmbedModal(kb) {
 }
 
 export async function openEmbedForFirstKb() {
-  const r = await api("GET", "/api/kb");
+  const r = await api("GET", "/collections");
   if (!r.ok) return false;
-  const kb = r.data.knowledge_bases[0];
+  const kb = r.data.collections[0];
   if (!kb) return false;
   openEmbedModal(kb);
   return true;
@@ -358,9 +396,9 @@ export function kbChat(id) {
     main);
 
   fill(sideList, async () => {
-    const r = await api("GET", "/api/kb");
+    const r = await api("GET", "/collections");
     if (!r.ok) return alertBox(errorText(r));
-    const kbs = r.data.knowledge_bases;
+    const kbs = r.data.collections;
     if (!kbs.length) {
       main.replaceChildren(h("div", { class: "card" }, h("p", { class: "empty" }, t("kb_chat_no_kb")),
         h("div", { class: "row" }, link("#/dashboard", t("kb_create"), "btn"))));
@@ -386,7 +424,7 @@ export function kbChat(id) {
     const saveMsg = h("div", { role: "status", "aria-live": "polite" });
     saveBtn.addEventListener("click", async () => {
       saveMsg.replaceChildren();
-      const r = await withLoading(saveBtn, t("loading"), () => api("PUT", `/api/kb/${kb.id}`, { system_prompt: system.value }));
+      const r = await withLoading(saveBtn, t("loading"), () => api("PUT", `/collections/${kb.id}`, { system_prompt: system.value }));
       if (!r.ok) { saveMsg.append(alertBox(errorText(r))); return; }
       kb.system_prompt = r.data.system_prompt;
       saveMsg.append(h("div", { class: "success" }, t("kb_system_saved")));
@@ -417,7 +455,7 @@ export function kbChat(id) {
       const pending = h("div", { class: "kb-msg bot" }, h("span", { class: "kb-status" }, t("kb_typing")));
       log.append(pending);
       log.scrollTop = log.scrollHeight;
-      const r = await api("POST", `/api/kb/${kb.id}/chat`, { question: q, consent: consent.checked, language: getLang() });
+      const r = await api("POST", `/collections/${kb.id}/chat`, { question: q, consent: consent.checked, language: getLang() });
       pending.replaceChildren();
       if (!r.ok) pending.append(alertBox(errorText(r)));
       else pending.append(answerBlock(r.data));

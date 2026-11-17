@@ -11,10 +11,10 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, Header, Request, Response, UploadFile
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlmodel import Session, func, select
 
-from . import ai, rag
+from . import ai, rag, kb_vectors
 from .auth import current_user
 from .config import settings
 from .db import get_session
@@ -24,6 +24,7 @@ from .ratelimit import hit
 from .redact import redact
 
 router = APIRouter(prefix="/api", tags=["knowledge-base"])
+collections_router = APIRouter(prefix="/collections", tags=["collections"])
 
 MAX_PROMPT = 4000
 MAX_CHUNK = 8000
@@ -57,7 +58,8 @@ def _chunk_count(db: Session, kb_id: int, user_id: int) -> int:
 
 
 def _kb_out(db: Session, kb: KnowledgeBase) -> dict:
-    return {"id": kb.id, "title": kb.title, "system_prompt": kb.system_prompt, "embed_token": kb.embed_token,
+    return {"id": kb.id, "title": kb.title, "collection_id": kb.id, "collection_name": kb.title,
+            "user_id": kb.user_id, "system_prompt": kb.system_prompt, "embed_token": kb.embed_token,
             "chunks": _chunk_count(db, kb.id, kb.user_id), "created_at": kb.created_at, "updated_at": kb.updated_at}
 
 
@@ -85,12 +87,37 @@ def create_kb(data: KbIn, user: User = Depends(current_user), db: Session = Depe
     kb = KnowledgeBase(user_id=user.id, title=title, system_prompt=data.system_prompt.strip()[:MAX_PROMPT],
                        embed_token=secrets.token_urlsafe(24))
     db.add(kb)
+    db.flush()
+    try:
+        # External embedding dimensions are known only after the first consented upload.
+        kb_vectors.ensure(kb, rag.embedder_name(), rag.DIM if settings.rag_embedder == "local" else None)
+    except kb_vectors.VectorStoreError:
+        db.rollback()
+        raise fail(503, "rag_unavailable", lang) from None
     db.add(AuditLog(actor_id=user.id, action="kb_created"))
     db.commit()
     db.refresh(kb)
     return _kb_out(db, kb)
 
 
+class CollectionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    collection_name: str = Field(validation_alias=AliasChoices("collection_name", "title"))
+    system_prompt: str = ""
+
+
+@collections_router.get("")
+def list_collections(user: User = Depends(current_user), db: Session = Depends(get_session)):
+    return {"collections": list_kbs(user, db)["knowledge_bases"]}
+
+
+@collections_router.post("", status_code=201)
+def create_collection(data: CollectionIn, user: User = Depends(current_user), db: Session = Depends(get_session),
+                      x_lang: str | None = Header(default=None)):
+    return create_kb(KbIn(title=data.collection_name, system_prompt=data.system_prompt), user, db, x_lang)
+
+
+@collections_router.get("/{kb_id}")
 @router.get("/kb/{kb_id}")
 def get_kb(kb_id: int, user: User = Depends(current_user), db: Session = Depends(get_session),
            x_lang: str | None = Header(default=None)):
@@ -103,6 +130,7 @@ class KbUpdateIn(BaseModel):
     system_prompt: str | None = None
 
 
+@collections_router.put("/{kb_id}")
 @router.put("/kb/{kb_id}")
 def update_kb(kb_id: int, data: KbUpdateIn, user: User = Depends(current_user), db: Session = Depends(get_session),
               x_lang: str | None = Header(default=None)):
@@ -124,11 +152,16 @@ def update_kb(kb_id: int, data: KbUpdateIn, user: User = Depends(current_user), 
     return _kb_out(db, kb)
 
 
+@collections_router.delete("/{kb_id}")
 @router.delete("/kb/{kb_id}")
 def delete_kb(kb_id: int, user: User = Depends(current_user), db: Session = Depends(get_session),
               x_lang: str | None = Header(default=None)):
     lang = _lang(user, x_lang)
     kb = _kb_or_404(db, user, kb_id, lang)
+    try:
+        kb_vectors.delete_collection(kb)
+    except kb_vectors.VectorStoreError:
+        raise fail(503, "rag_unavailable", lang) from None
     for c in db.exec(select(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb.id,
                                                  KnowledgeChunk.user_id == user.id)).all():
         db.delete(c)
@@ -143,6 +176,7 @@ def delete_kb(kb_id: int, user: User = Depends(current_user), db: Session = Depe
 
 
 # ------------------------------------------------------------------ upload + chunks
+@collections_router.post("/{kb_id}/upload", status_code=201)
 @router.post("/kb/{kb_id}/upload", status_code=201)
 def upload_to_kb(kb_id: int, file: UploadFile = File(...), consent: bool = Form(False),
                  user: User = Depends(current_user), db: Session = Depends(get_session),
@@ -175,11 +209,18 @@ def upload_to_kb(kb_id: int, file: UploadFile = File(...), consent: bool = Form(
         raise fail(503 if code == "rag_unavailable" else 422, code, lang) from None
     name = rag.embedder_name()
     sha = hashlib.sha256(data).hexdigest()
-    (user_docs_dir(user.id) / f"kb{kb_id}-{sha}.pdf").write_bytes(data)  # sirf apne user ke folder mein
-    for (page, kind, text), v in zip(items, vecs):
-        db.add(KnowledgeChunk(user_id=user.id, kb_id=kb_id, page=page, kind=kind, text=text,
-                              embedding=v.astype(np.float32).tobytes(), dim=len(v), embedder=name))
+    chunks = [KnowledgeChunk(user_id=user.id, kb_id=kb_id, page=page, kind=kind, text=text,
+                             embedding=v.astype(np.float32).tobytes(), dim=len(v), embedder=name)
+              for (page, kind, text), v in zip(items, vecs)]
+    db.add_all(chunks)
+    db.flush()
     kb = db.get(KnowledgeBase, kb_id)
+    try:
+        kb_vectors.upsert(kb, chunks)
+    except kb_vectors.VectorStoreError:
+        db.rollback()
+        raise fail(503, "rag_unavailable", lang) from None
+    (user_docs_dir(user.id) / f"kb{kb_id}-{sha}.pdf").write_bytes(data)
     kb.updated_at = utcnow()
     db.add(kb)
     db.add(AuditLog(actor_id=user.id, action="kb_upload"))
@@ -188,14 +229,16 @@ def upload_to_kb(kb_id: int, file: UploadFile = File(...), consent: bool = Form(
             "chunks": len(items), "embedder": name, "sha256": sha[:16]}
 
 
+@collections_router.get("/{kb_id}/chunks")
 @router.get("/kb/{kb_id}/chunks")
 def list_chunks(kb_id: int, user: User = Depends(current_user), db: Session = Depends(get_session),
                 x_lang: str | None = Header(default=None)):
     _kb_or_404(db, user, kb_id, _lang(user, x_lang))
     rows = db.exec(select(KnowledgeChunk).where(KnowledgeChunk.kb_id == kb_id, KnowledgeChunk.user_id == user.id)
                    .order_by(KnowledgeChunk.page, KnowledgeChunk.id)).all()
-    return {"chunks": [{"chunk_id": c.id, "page": c.page, "kind": c.kind, "text": c.text,
-                        "updated_at": c.updated_at} for c in rows]}
+    return {"collection_id": kb_id, "user_id": user.id,
+            "chunks": [{"chunk_id": c.id, "collection_id": c.kb_id, "user_id": c.user_id,
+                        "page": c.page, "kind": c.kind, "text": c.text, "updated_at": c.updated_at} for c in rows]}
 
 
 def _chunk_or_404(db: Session, user: User, kb_id: int, chunk_id: int, lang: str) -> KnowledgeChunk:
@@ -209,6 +252,7 @@ class ChunkIn(BaseModel):
     text: str
 
 
+@collections_router.put("/{kb_id}/chunks/{chunk_id}")
 @router.put("/kb/{kb_id}/chunks/{chunk_id}")
 def update_chunk(kb_id: int, chunk_id: int, data: ChunkIn, user: User = Depends(current_user),
                  db: Session = Depends(get_session), x_lang: str | None = Header(default=None)):
@@ -222,10 +266,15 @@ def update_chunk(kb_id: int, chunk_id: int, data: ChunkIn, user: User = Depends(
         v = rag.embed([text], "document", api_key=ai.user_gemini_key(db, user.id))[0]
     except rag.RagError:
         raise fail(503, "rag_unavailable", lang) from None
-    # Wahi row (wahi chunk_id) update hoti hai: naya upload nahi, sirf vector + text badalta hai.
-    chunk.text, chunk.embedding, chunk.dim, chunk.embedder = text, v.astype(np.float32).tobytes(), len(v), rag.embedder_name()
-    chunk.updated_at = utcnow()
     kb = db.get(KnowledgeBase, kb_id)
+    try:
+        kb_vectors.delete_chunk(kb, chunk)
+        chunk.text, chunk.embedding, chunk.dim, chunk.embedder = text, v.astype(np.float32).tobytes(), len(v), rag.embedder_name()
+        kb_vectors.upsert(kb, [chunk])
+    except kb_vectors.VectorStoreError:
+        db.rollback()
+        raise fail(503, "rag_unavailable", lang) from None
+    chunk.updated_at = utcnow()
     kb.updated_at = utcnow()
     db.add(chunk)
     db.add(kb)
@@ -234,12 +283,17 @@ def update_chunk(kb_id: int, chunk_id: int, data: ChunkIn, user: User = Depends(
     return {"chunk_id": chunk.id, "page": chunk.page, "kind": chunk.kind, "text": chunk.text}
 
 
+@collections_router.delete("/{kb_id}/chunks/{chunk_id}")
 @router.delete("/kb/{kb_id}/chunks/{chunk_id}")
 def delete_chunk(kb_id: int, chunk_id: int, user: User = Depends(current_user), db: Session = Depends(get_session),
                  x_lang: str | None = Header(default=None)):
     lang = _lang(user, x_lang)
-    _kb_or_404(db, user, kb_id, lang)
+    kb = _kb_or_404(db, user, kb_id, lang)
     chunk = _chunk_or_404(db, user, kb_id, chunk_id, lang)
+    try:
+        kb_vectors.delete_chunk(kb, chunk)
+    except kb_vectors.VectorStoreError:
+        raise fail(503, "rag_unavailable", lang) from None
     db.delete(chunk)
     db.add(AuditLog(actor_id=user.id, action="kb_chunk_deleted"))
     db.commit()
@@ -257,6 +311,15 @@ def _search(db: Session, kb: KnowledgeBase, question: str, api_key: str | None =
     rows = [c for c in rows if c.dim == len(q)]
     if not rows:
         return []
+    if settings.qdrant_url:
+        try:
+            # SQLite is authoritative; refresh this scope for existing uploads and interrupted vector writes.
+            kb_vectors.upsert(kb, rows)
+            hits = kb_vectors.search(kb, rag.embedder_name(), q)
+        except kb_vectors.VectorStoreError:
+            raise rag.RagError("rag_unavailable") from None
+        owned = {c.id: c for c in rows}
+        return [(owned[chunk_id], score) for chunk_id, score in hits if chunk_id in owned]
     scores = np.vstack([np.frombuffer(c.embedding, dtype=np.float32) for c in rows]) @ q
     top = np.argsort(-scores)[: settings.rag_top_k]
     return [(rows[i], float(scores[i])) for i in top]
@@ -322,6 +385,7 @@ def _chat_limited(db: Session, user: User) -> bool:
     return used >= settings.rag_hourly_limit
 
 
+@collections_router.post("/{kb_id}/chat")
 @router.post("/kb/{kb_id}/chat")
 def chat(kb_id: int, data: ChatIn, user: User = Depends(current_user), db: Session = Depends(get_session),
          x_lang: str | None = Header(default=None)):
